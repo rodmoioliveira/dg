@@ -1,0 +1,125 @@
+#!/bin/bash
+
+HELP_TEXT=$(
+    cat <<"EOF"
+USAGE:
+    dg [OPTIONS]
+
+OPTIONS:
+    -y <YEAR>
+          official diary year
+    -m <MONTH>
+          official diary month
+    -w <WORD>
+          search word
+    -a <NUM>
+          num of lines after <WORD>
+    -b <NUM>
+          num of lines before <WORD>
+    -i
+          insensitive case search
+    -v
+          invert search results
+EOF
+)
+
+function usage {
+    echo >&2 "$HELP_TEXT"
+    exit 1
+}
+
+while getopts 'm:y:w:a:b:hiv' OPTION; do
+    case "$OPTION" in
+    m)
+        MONTH="$OPTARG"
+        ;;
+    w)
+        WORD="$OPTARG"
+        ;;
+    y)
+        YEAR="$OPTARG"
+        ;;
+    a)
+        AFTER="$OPTARG"
+        ;;
+    b)
+        BEFORE="$OPTARG"
+        ;;
+    i)
+        INSENSITIVE="-i"
+        ;;
+    v)
+        INVERT_MATCH="-v"
+        ;;
+    h)
+        usage
+        ;;
+    ?)
+        usage
+        ;;
+    esac
+done
+shift "$(($OPTIND - 1))"
+
+if [ -z "$WORD" ]; then
+    WORD="SECRETARIA DE CULTURA"
+fi
+
+if [ -z "$AFTER" ]; then
+    AFTER=0
+fi
+
+if [ -z "$BEFORE" ]; then
+    BEFORE=0
+fi
+
+if [ ! -z "$MONTH" ] && [ ! -z "$YEAR" ]; then
+    DIR="${YEAR}_${MONTH}"
+    [[ ! -d $DIR ]] && mkdir $DIR
+
+    echo >&2 Fetching diaries...
+    wget --no-directories \
+        --no-check-certificate \
+        --content-disposition \
+        --restrict-file-names=nocontrol \
+        -e robots=off \
+        -N \
+        -P $DIR \
+        -A.pdf -r "https://diariooficial.guarulhos.sp.gov.br/index.php?mes=${MONTH}&ano=${YEAR}" 2>/dev/null
+    echo >&2 Fetching Done!
+fi
+
+if [ -z "$MONTH" ] && [ ! -z "$YEAR" ]; then
+    DIR=$(fd "^$YEAR" -t d --max-depth=1)
+fi
+
+if [ ! -z "$MONTH" ] && [ -z "$YEAR" ]; then
+    DIR=$(fd "_$MONTH" -t d --max-depth=1)
+fi
+
+if [ -z "$MONTH" ] && [ -z "$YEAR" ]; then
+    DIR=$(fd . -t d --max-depth=1)
+fi
+
+if [ -z "$DIR" ]; then
+    echo >&2 "No diaries directories found. Fetch some with:"
+    echo >&2 ""
+    echo >&2 "dg -m <MM> -y <YYYY> -w <WORD>"
+    exit 1
+fi
+
+FILES=$(fd . $DIR -e pdf --no-ignore)
+for file in $FILES; do
+    if [[ ! -f "$file".txt ]]; then
+        echo >&2 Converting $file to txt...
+        pdftotext -nopgbrk $file "$file".txt
+    fi
+done
+
+fd . $DIR -e txt --no-ignore |
+    xargs rg "\\b$WORD\\b" $INSENSITIVE $INVERT_MATCH --with-filename -A $AFTER -B $BEFORE -g '!dg'
+
+# echo >&2 "- Directories:"
+# echo >&2 "$DIR"
+# echo >&2 "- Files:"
+# echo >&2 "$FILES"
